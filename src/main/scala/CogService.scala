@@ -2,7 +2,7 @@ package cogtileserver
 
 import geotrellis.proj4.WebMercator
 import geotrellis.raster.crop.Crop
-import geotrellis.raster.io.geotiff.{Auto, MultibandGeoTiff}
+import geotrellis.raster.io.geotiff.{Auto, GeoTiff, MultibandGeoTiff}
 import geotrellis.raster.{MultibandTile, RasterExtent}
 import geotrellis.spark.SpatialKey
 import geotrellis.spark.tiling.ZoomedLayoutScheme
@@ -13,7 +13,6 @@ import geotrellis.raster.reproject.Reproject
 object CogService {
 
   def getTile(x: Int, y: Int, zoom: Int, uri: String): Option[Array[Byte]] = {
-
     val layoutScheme = ZoomedLayoutScheme(WebMercator)
     val layout = layoutScheme.levelForZoom(zoom).layout
 
@@ -22,18 +21,18 @@ object CogService {
     val keyExtent: Extent = layout.mapTransform(SpatialKey(x, y))
     val reprojectedKeyExtent = keyExtent.reproject(layoutScheme.crs, geoTiff.crs)
 
+    def extractTile(extent: Extent, tiff: GeoTiff[MultibandTile]) = tiff
+      .getClosestOverview(layout.cellSize, Auto(0))
+      .crop(extent, Crop.Options(clamp = false))
+      .raster
+      .reproject(geoTiff.crs, layoutScheme.crs, Reproject.Options(targetCellSize = Some(layout.cellSize)))
+      .resample(RasterExtent(keyExtent, layoutScheme.tileSize, layoutScheme.tileSize))
+      .tile
+
     geoTiff
       .extent
       .intersection(reprojectedKeyExtent)
-      .map { ext =>
-        geoTiff
-          .getClosestOverview(layout.cellSize, Auto(0))
-          .crop(ext, Crop.Options(clamp = false))
-          .raster
-          .reproject(geoTiff.crs, layoutScheme.crs, Reproject.Options(targetCellSize = Some(layout.cellSize)))
-          .resample(RasterExtent(keyExtent, layoutScheme.tileSize, layoutScheme.tileSize))
-      }
-      .map(tiff => tiff.tile.renderPng().bytes)
+      .map(extent => extractTile(extent, geoTiff).renderPng().bytes)
   }
 
   def getBounds(uri: String): String = {
